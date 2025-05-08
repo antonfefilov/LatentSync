@@ -23,23 +23,39 @@ from .affine_transform import AlignRestore
 from .face_detector import FaceDetector
 
 
-def load_fixed_mask(resolution: int, mask_image_path="latentsync/utils/mask.png") -> torch.Tensor:
+def load_fixed_mask(
+    resolution: int, mask_image_path="latentsync/utils/mask.png"
+) -> torch.Tensor:
     mask_image = cv2.imread(mask_image_path)
     mask_image = cv2.cvtColor(mask_image, cv2.COLOR_BGR2RGB)
-    mask_image = cv2.resize(mask_image, (resolution, resolution), interpolation=cv2.INTER_LANCZOS4) / 255.0
+    mask_image = (
+        cv2.resize(
+            mask_image, (resolution, resolution), interpolation=cv2.INTER_LANCZOS4
+        )
+        / 255.0
+    )
     mask_image = rearrange(torch.from_numpy(mask_image), "h w c -> c h w")
     return mask_image
 
 
 class ImageProcessor:
-    def __init__(self, resolution: int = 512, device: str = "cpu", mask_image=None):
+    def __init__(
+        self,
+        resolution: int = 512,
+        device: str = "cpu",
+        mask_image=None,
+        skip_no_face: bool = False,
+    ):
         self.resolution = resolution
         self.resize = transforms.Resize(
-            (resolution, resolution), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True
+            (resolution, resolution),
+            interpolation=transforms.InterpolationMode.BICUBIC,
+            antialias=True,
         )
         self.normalize = transforms.Normalize([0.5], [0.5], inplace=True)
 
         self.restorer = AlignRestore(resolution=resolution, device=device)
+        self.skip_no_face = skip_no_face
 
         if mask_image is None:
             self.mask_image = load_fixed_mask(resolution)
@@ -53,20 +69,31 @@ class ImageProcessor:
 
     def affine_transform(self, image: torch.Tensor) -> np.ndarray:
         if self.face_detector is None:
-            raise NotImplementedError("Using the CPU for face detection is not supported")
+            raise NotImplementedError(
+                "Using the CPU for face detection is not supported"
+            )
         bbox, landmark_2d_106 = self.face_detector(image)
         if bbox is None:
-            raise RuntimeError("Face not detected")
+            if self.skip_no_face:
+                return None, None, None
+            else:
+                raise RuntimeError("Face not detected")
 
-        pt_left_eye = np.mean(landmark_2d_106[[43, 48, 49, 51, 50]], axis=0)  # left eyebrow center
+        pt_left_eye = np.mean(
+            landmark_2d_106[[43, 48, 49, 51, 50]], axis=0
+        )  # left eyebrow center
         pt_right_eye = np.mean(landmark_2d_106[101:106], axis=0)  # right eyebrow center
         pt_nose = np.mean(landmark_2d_106[[74, 77, 83, 86]], axis=0)  # nose center
 
         landmarks3 = np.round([pt_left_eye, pt_right_eye, pt_nose])
 
-        face, affine_matrix = self.restorer.align_warp_face(image.copy(), landmarks3=landmarks3, smooth=True)
+        face, affine_matrix = self.restorer.align_warp_face(
+            image.copy(), landmarks3=landmarks3, smooth=True
+        )
         box = [0, 0, face.shape[1], face.shape[0]]  # x1, y1, x2, y2
-        face = cv2.resize(face, (self.resolution, self.resolution), interpolation=cv2.INTER_LANCZOS4)
+        face = cv2.resize(
+            face, (self.resolution, self.resolution), interpolation=cv2.INTER_LANCZOS4
+        )
         face = rearrange(torch.from_numpy(face), "h w c -> c h w")
         return face, box, affine_matrix
 
@@ -79,16 +106,25 @@ class ImageProcessor:
         masked_pixel_values = pixel_values * self.mask_image
         return pixel_values, masked_pixel_values, self.mask_image[0:1]
 
-    def prepare_masks_and_masked_images(self, images: Union[torch.Tensor, np.ndarray], affine_transform=False):
+    def prepare_masks_and_masked_images(
+        self, images: Union[torch.Tensor, np.ndarray], affine_transform=False
+    ):
         if isinstance(images, np.ndarray):
             images = torch.from_numpy(images)
         if images.shape[3] == 3:
             images = rearrange(images, "f h w c -> f c h w")
 
-        results = [self.preprocess_fixed_mask_image(image, affine_transform=affine_transform) for image in images]
+        results = [
+            self.preprocess_fixed_mask_image(image, affine_transform=affine_transform)
+            for image in images
+        ]
 
         pixel_values_list, masked_pixel_values_list, masks_list = list(zip(*results))
-        return torch.stack(pixel_values_list), torch.stack(masked_pixel_values_list), torch.stack(masks_list)
+        return (
+            torch.stack(pixel_values_list),
+            torch.stack(masked_pixel_values_list),
+            torch.stack(masks_list),
+        )
 
     def process_images(self, images: Union[torch.Tensor, np.ndarray]):
         if isinstance(images, np.ndarray):
@@ -101,14 +137,18 @@ class ImageProcessor:
 
 
 class VideoProcessor:
-    def __init__(self, resolution: int = 512, device: str = "cpu"):
-        self.image_processor = ImageProcessor(resolution, device)
+    def __init__(
+        self, resolution: int = 512, device: str = "cpu", skip_no_face: bool = False
+    ):
+        self.image_processor = ImageProcessor(resolution, device, skip_no_face)
 
     def affine_transform_video(self, video_path):
         video_frames = read_video(video_path, change_fps=False)
         results = []
         for frame in video_frames:
             frame, _, _ = self.image_processor.affine_transform(frame)
+            if frame is None:
+                continue
             results.append(frame)
         results = torch.stack(results)
 
