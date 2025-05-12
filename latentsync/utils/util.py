@@ -32,6 +32,8 @@ from decord import AudioReader, VideoReader
 import shutil
 import subprocess
 
+from preprocess.remove_incorrect_affined import FaceDetector
+
 
 # Machine epsilon for a float32 (single precision)
 eps = np.finfo(np.float32).eps
@@ -43,7 +45,7 @@ def read_json(filepath: str):
     return json_dict
 
 
-def read_video(video_path: str, change_fps=True, use_decord=True):
+def read_video(video_path: str, change_fps=True, use_decord=True, skip_no_face=False):
     if change_fps:
         temp_dir = "temp"
         if os.path.exists(temp_dir):
@@ -58,9 +60,31 @@ def read_video(video_path: str, change_fps=True, use_decord=True):
         target_video_path = video_path
 
     if use_decord:
-        return read_video_decord(target_video_path)
+        video_frames = read_video_decord(target_video_path)
     else:
-        return read_video_cv2(target_video_path)
+        video_frames = read_video_cv2(target_video_path)
+
+    if not skip_no_face:
+        return video_frames
+
+    face_detector = FaceDetector()
+    filtered_frames = []
+
+    skipped_frames_count = 0
+    for i, frame in enumerate(video_frames):
+        if face_detector.detect_face(frame):
+            filtered_frames.append(frame)
+        else:
+            skipped_frames_count += 1
+            print(f"Skipping frame {i} - no face detected")
+
+    if skipped_frames_count > 0:
+        print(
+            f"Skipped {skipped_frames_count} frames out of {len(video_frames)} total frames due to no face detection"
+        )
+
+    face_detector.close()
+    return np.array(filtered_frames)
 
 
 def read_video_decord(video_path: str):

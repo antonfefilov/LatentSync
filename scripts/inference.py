@@ -91,6 +91,7 @@ def main(config, args):
         width=config.data.resolution,
         height=config.data.resolution,
         mask_image_path=config.data.mask_image_path,
+        skip_no_face=args.skip_no_face,
     )
 
 
@@ -104,6 +105,12 @@ if __name__ == "__main__":
     parser.add_argument("--inference_steps", type=int, default=20)
     parser.add_argument("--guidance_scale", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=1247)
+    parser.add_argument(
+        "--skip_no_face",
+        type=bool,
+        default=False,
+        help="Skip frames that raise the “Face not detected” error instead of stopping with an exception.",
+    )
     args = parser.parse_args()
 
     config = OmegaConf.load(args.unet_config_path)
