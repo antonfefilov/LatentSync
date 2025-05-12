@@ -32,7 +32,7 @@ from decord import AudioReader, VideoReader
 import shutil
 import subprocess
 
-from preprocess.remove_incorrect_affined import FaceDetector
+from latentsync.utils.simple_face_detector import SimpleFaceDetector
 
 
 # Machine epsilon for a float32 (single precision)
@@ -67,7 +67,7 @@ def read_video(video_path: str, change_fps=True, use_decord=True, skip_no_face=F
     if not skip_no_face:
         return video_frames
 
-    face_detector = FaceDetector()
+    face_detector = SimpleFaceDetector()
     filtered_frames = []
 
     skipped_frames_count = 0
